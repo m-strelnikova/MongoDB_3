@@ -1,7 +1,26 @@
 import express from "express";
+import fs from "fs/promises";
 import Product from "../models/Product.js";
 
 const router = express.Router();
+
+const logOperation = async (action, data) => {
+    const time = new Date().toLocaleString("ru-RU");
+
+    const logEntry = JSON.stringify({
+        action,
+        timestamp: time,
+        data
+    }, null, 2) + ",\n";
+
+    try {
+        await fs.appendFile("backup.json", logEntry, "utf8");
+    } catch (error) {
+        console.error("Failed to write backup file:", error);
+    }
+
+    console.log(`[LOG] Action: ${action} | Time: ${time}`);
+};
 
 router.post("/add", async (req, res) => {
     try {
@@ -13,7 +32,7 @@ router.post("/add", async (req, res) => {
 
         await Product.create(product);
 
-        console.log("Product added.");
+        logOperation("CREATE", product);
         return res.status(200).json({ message: "Product successfully created." });
     } catch (error) {
         console.error("Failed creating a product: ", error);
@@ -25,7 +44,7 @@ router.get("/", async (req, res) => {
     try {
         const products = await Product.find({}).sort({ name: 1 });;
 
-        console.log(products);
+        logOperation("GET_ALL", { count: products.length });
         return res.status(200).json({ products });
     } catch (error) {
         console.error("Failed fetching products: ", error);
@@ -38,18 +57,19 @@ router.put("/:id", async (req, res) => {
         const { id } = req.params;
         const updateData = req.body;
 
-        const product = await Product.findByIdAndUpdate(
+        const product = await Product.findById(id);
+        if (!product) {
+            return res.status(404).json({ message: "Product not found" });
+        }
+
+        const updatedProduct = await Product.findByIdAndUpdate(
             id,
             updateData,
             { returnDocument: "after", runValidators: true }
         );
 
-        if (!product) {
-            return res.status(404).json({ message: "Product not found" });
-        }
-
-        console.log("Product updated:", product);
-        return res.status(200).json({ product });
+        logOperation("UPDATE", { before: product, after: updatedProduct });
+        return res.status(200).json({ product: updatedProduct });
     } catch (error) {
         console.error("Failed updating product: ", error);
         return res.status(500).json({ error: error.message });
@@ -59,14 +79,16 @@ router.put("/:id", async (req, res) => {
 router.delete("/:id", async (req, res) => {
     try {
         const { id } = req.params;
-        await Product.findByIdAndDelete(id);
+        const deletedProduct = await Product.findByIdAndDelete(id);
 
-        const product = await Product.findById(id);
-        if (!product) {
-            return res.status(200).json({ message: "Product not found, it was successfully deleted!" });
-        } else {
-            return res.status(501).json({ message: "Product wasn't deleted!" });
+        if (!deletedProduct) {
+            return res.status(404).json({ message: "Product not found" });
         }
+
+        logOperation("DELETE", deletedProduct);
+        return res.status(200).json({
+            message: "Product successfully deleted!", product: deletedProduct
+        });
     } catch (error) {
         console.error("Failed deleting product by ID: ", error);
         return res.status(500).json({ error: error.message });
